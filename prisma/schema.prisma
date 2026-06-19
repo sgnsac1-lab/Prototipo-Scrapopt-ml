@@ -1,0 +1,199 @@
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum RolUsuario {
+  ADMINISTRADOR
+  GERENTE
+  JEFE_PRODUCCION
+  ALMACEN
+  OPERARIO
+  AMBIENTAL
+}
+
+enum EstadoUsuario {
+  ACTIVO
+  INACTIVO
+}
+
+enum FamiliaPerfil {
+  PLANCHA
+  TUBO
+  ANGULO
+  BARRA
+  PERFIL_I
+  OTRO
+}
+
+enum EstadoMaterial {
+  NUEVO
+  RETAZO_APROVECHABLE
+  MERMA_CHATARRA
+}
+
+enum EstadoOrden {
+  PENDIENTE
+  ANALIZADA_ML
+  EN_PRODUCCION
+  COMPLETADA
+}
+
+enum EstadoRecomendacion {
+  SUGERIDA
+  APROBADA
+  RECHAZADA
+}
+
+enum TipoMovimiento {
+  INGRESO_COMPRA
+  SALIDA_PRODUCCION
+  INGRESO_RETAZO_SOBRANTE
+  BAJA_CHATARRA
+}
+
+// ==========================================
+// MODELOS (Tablas de la Base de Datos)
+// ==========================================
+
+model Usuario {
+  id              String        @id @default(uuid()) // En Supabase, esto hará match con auth.users.id
+  nombre_completo String
+  email           String        @unique
+  rol             RolUsuario    @default(OPERARIO)
+  estado          EstadoUsuario @default(ACTIVO)
+  
+  creado_en       DateTime      @default(now())
+  actualizado_en  DateTime      @updatedAt
+
+  // Relaciones
+  ordenes_creadas      OrdenFabricacion[]
+  consumos_registrados ConsumoReal[]
+  movimientos          HistorialMovimiento[]
+}
+
+model CatalogoMaterial {
+  id             String        @id @default(uuid())
+  codigo_interno String?       @unique
+  nombre         String        @unique
+  familia_perfil FamiliaPerfil @default(OTRO)
+  
+  creado_en      DateTime      @default(now())
+  actualizado_en DateTime      @updatedAt
+
+  // Relaciones
+  materiales_inventario Material[]
+  ordenes_requeridas    OrdenFabricacion[]
+}
+
+model Material {
+  id                String         @id @default(uuid())
+  codigo_interno    String?        @unique
+  catalogo_id       String
+  catalogo          CatalogoMaterial @relation(fields: [catalogo_id], references: [id])
+  
+  espesor_mm        Float?         // Opcional, dependiendo del tipo de perfil
+  ancho_mm          Float?         // Opcional
+  largo_mm          Float?         // Opcional
+  peso_kg           Float
+  ubicacion         String?
+  estado_material   EstadoMaterial @default(NUEVO)
+  aprovechable_ml   Boolean        @default(true)
+  costo_estimado_kg Float          // Clave para calcular el ahorro en Módulo 6
+
+  creado_en         DateTime       @default(now())
+  actualizado_en    DateTime       @updatedAt
+
+  // Relaciones
+  detalles_recomendacion DetalleRecomendacion[]
+  movimientos            HistorialMovimiento[]
+}
+
+model OrdenFabricacion {
+  id                    String           @id @default(uuid()) // Ej: "ORD-1042"
+  codigo_interno        String?          @unique
+  cliente_proyecto      String
+  descripcion           String?
+  
+  catalogo_requerido_id String
+  catalogo_requerido    CatalogoMaterial @relation(fields: [catalogo_requerido_id], references: [id])
+  
+  peso_estimado_kg      Float
+  fecha_entrega         DateTime
+  estado_orden          EstadoOrden      @default(PENDIENTE)
+
+  creado_por_id         String
+  creado_por            Usuario          @relation(fields: [creado_por_id], references: [id])
+
+  creado_en             DateTime         @default(now())
+  actualizado_en        DateTime         @updatedAt
+
+  // Relaciones
+  recomendacion         RecomendacionML? // Relación 1 a 1
+  consumo_real          ConsumoReal?     // Relación 1 a 1
+  movimientos           HistorialMovimiento[]
+}
+
+model RecomendacionML {
+  id                        String              @id @default(uuid())
+  orden_id                  String              @unique // Asegura que solo haya 1 recomendación por orden
+  orden                     OrdenFabricacion    @relation(fields: [orden_id], references: [id])
+  
+  peso_teorico_bruto_kg     Float
+  merma_esperada_porcentaje Float
+  retazo_esperado_descripcion String?
+  estado_recomendacion      EstadoRecomendacion @default(SUGERIDA)
+  
+  creado_en                 DateTime            @default(now())
+
+  // Relaciones
+  detalles                  DetalleRecomendacion[]
+}
+
+model DetalleRecomendacion {
+  id                      String          @id @default(uuid())
+  recomendacion_id        String
+  recomendacion           RecomendacionML @relation(fields: [recomendacion_id], references: [id], onDelete: Cascade)
+  
+  material_id             String
+  material                Material        @relation(fields: [material_id], references: [id])
+  
+  porcentaje_uso_sugerido Float           // Ej: 100% de este retazo
+}
+
+model ConsumoReal {
+  id                      String           @id @default(uuid())
+  orden_id                String           @unique
+  orden                   OrdenFabricacion @relation(fields: [orden_id], references: [id])
+  
+  material_real_utilizado String           // Para indicar si se hizo caso a la sugerencia o se usó otra cosa
+  peso_bruto_real_kg      Float
+  chatarra_generada_kg    Float
+  genero_nuevo_retazo     Boolean          @default(false)
+
+  registrado_por_id       String
+  registrado_por          Usuario          @relation(fields: [registrado_por_id], references: [id])
+
+  creado_en               DateTime         @default(now())
+}
+
+model HistorialMovimiento {
+  id                String           @id @default(uuid())
+  material_id       String
+  material          Material         @relation(fields: [material_id], references: [id])
+  
+  tipo_movimiento   TipoMovimiento
+  
+  orden_id          String?          // Opcional: Puede que el ingreso de material no tenga orden asignada
+  orden             OrdenFabricacion? @relation(fields: [orden_id], references: [id])
+  
+  registrado_por_id String
+  registrado_por    Usuario          @relation(fields: [registrado_por_id], references: [id])
+
+  fecha_movimiento  DateTime         @default(now())
+}
